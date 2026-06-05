@@ -164,7 +164,7 @@ function buildSlipSuccessCard({ amount, date, time, sender, receiver }) {
             type: 'box', layout: 'horizontal', alignItems: 'center',
             contents: [
               { type: 'box', layout: 'vertical', width: '9px', height: '9px', cornerRadius: '5px', backgroundColor: '#00C851', contents: [] },
-              { type: 'text', text: ' โอนเงินสำเร็จ', size: 'sm', color: '#00C851', weight: 'bold' },
+              { type: 'text', text: ' โอนเงินสำเร็จ', size: 'sm', color: '#C8A46B', weight: 'bold' },
             ],
           },
           { type: 'separator', color: '#eeeeee' },
@@ -180,7 +180,7 @@ function buildSlipSuccessCard({ amount, date, time, sender, receiver }) {
           { type: 'separator', color: '#eeeeee' },
           { type: 'box', layout: 'horizontal', alignItems: 'center', backgroundColor: '#f8f8f8', cornerRadius: '5px', paddingAll: '7px', contents: [
             { type: 'text', text: 'จำนวนเงิน', size: 'sm', color: '#888888', flex: 4 },
-            { type: 'text', text: `${safe(amount)} บาท`, size: 'sm', weight: 'bold', color: '#1a6fd4', flex: 6, align: 'end' },
+            { type: 'text', text: `${safe(amount)} บาท`, size: 'sm', weight: 'bold', color: '#C8A46B', flex: 6, align: 'end' },
           ]},
           { type: 'separator', color: '#eeeeee' },
           { type: 'box', layout: 'horizontal', contents: [
@@ -208,8 +208,8 @@ function buildSlipSuccessCard({ amount, date, time, sender, receiver }) {
             ],
           },
           { type: 'box', layout: 'horizontal', paddingAll: '5px', backgroundColor: '#F8F5F0', alignItems: 'center', contents: [
-            { type: 'text', text: '🔴🟠🟡🟢🔵🟣', size: 'xxs', flex: 0 },
-            { type: 'text', text: ' Love is love ', size: 'xxs', color: '#aaaaaa', flex: 1 },
+            
+            { type: 'text', text: ' 🌈 Love is Love ', size: 'xxs', color: '#C8A46B', flex: 1 },
           ]},
         ],
       },
@@ -253,8 +253,7 @@ function buildSlipFailCard() {
       footer: {
         type: 'box', layout: 'horizontal', paddingAll: '5px', backgroundColor: '#F8F5F0', alignItems: 'center',
         contents: [
-          { type: 'text', text: '🔴🟠🟡🟢🔵🟣', size: 'xxs', flex: 0 },
-          { type: 'text', text: ' Love is love ', size: 'xxs', color: '#aaaaaa', flex: 1 },
+          { type: 'text', text: ' 🌈 Love is Love ', size: 'xxs', color: '#C8A46B', flex: 1 },
         ],
       },
     },
