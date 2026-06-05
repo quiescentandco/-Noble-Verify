@@ -1,35 +1,24 @@
 const axios = require('axios');
+const FormData = require('form-data');
 
 async function readSlip(imageBuffer) {
   try {
-    // 🛠️ แปลง Buffer เป็น Blob เพื่อความเสถียรสูงสุดในการยิงเข้าหา API ปลายทาง ลดปัญหาเกิดเออเร่อ 400
-    const imageBlob = new Blob([imageBuffer], { type: 'image/jpeg' });
-    
     const form = new FormData();
-    form.append('file', imageBlob, 'slip.jpg'); 
+    form.append('base64Image', 'data:image/jpeg;base64,' + imageBuffer.toString('base64'));
     form.append('language', 'tha');
     form.append('isOverlayRequired', 'false');
     form.append('detectOrientation', 'true');
     form.append('scale', 'true');
     form.append('OCREngine', '2');
 
-    console.log('⏳ กำลังส่งรูปภาพไปประมวลผลที่ OCR Space...');
-
     const response = await axios.post(
       'https://api.ocr.space/parse/image',
       form,
-      { 
-        headers: { 
-          'apikey': process.env.OCR_API_KEY 
-        } 
+      {
+        headers: { ...form.getHeaders(), 'apikey': process.env.OCR_API_KEY },
+        timeout: 12000,
       }
     );
-
-    // เช็กฝั่งเซิร์ฟเวอร์ OCR เกิดปัญหาขัดข้องหรือไม่
-    if (response.data && response.data.IsErroredOnProcessing) {
-      console.error('❌ OCR Space แจ้งข้อผิดพลาดระบบ:', response.data.ErrorMessage);
-      throw new Error(response.data.ErrorMessage?.[0] || 'OCR Processing Error');
-    }
 
     const text = response.data?.ParsedResults?.[0]?.ParsedText || '';
     console.log('OCR Text:', text);
@@ -37,7 +26,6 @@ async function readSlip(imageBuffer) {
     const lines = text.split('\n').map(l => l.trim()).filter(l => l);
     console.log('OCR Lines:', lines);
 
-    // ── blacklist บรรทัดที่ไม่ใช่ชื่อคน ──────────────────
     function isNameLine(str) {
       if (!str || str.length < 3) return false;
       if (/^\d{4,}/.test(str)) return false;
@@ -96,7 +84,6 @@ async function readSlip(imageBuffer) {
         if (found && !sender) { sender = found.name; i = found.index; }
         continue;
       }
-
       if (isToLabel || isMisreadToLabel) {
         mode = 'to';
         const inline = stripLabel(line);
@@ -105,12 +92,9 @@ async function readSlip(imageBuffer) {
         if (found && !receiver) { receiver = found.name; i = found.index; }
         continue;
       }
-
       if (isArrow) { mode = 'to'; continue; }
-
       if (mode === 'from' && !sender && isNameLine(line)) { sender = line; continue; }
       if (mode === 'to' && !receiver && isNameLine(line)) { receiver = line; continue; }
-
       if (/^(Fee|Amount|จำนวนเงิน|จำนวน|Bank reference|Transaction|วันที่|ค่าธรรมเนียม|เลขที่รายการ|วันที่ทำรายการ)/i.test(line)) {
         mode = null;
       }
@@ -137,19 +121,13 @@ async function readSlip(imageBuffer) {
       }
     }
 
-    // ── ดึงจำนวนเงิน ─────────────────────────────────────
     let amountMatch = null;
     amountMatch = text.match(/(?:จำนวน(?:เงิน)?)[:\s]*(\d{1,3}(?:,\d{3})+(?:\.\d{2})?)(?:\s*บาท)?/);
-    if (!amountMatch)
-      amountMatch = text.match(/(?:จำนวน(?:เงิน)?)[:\s]*(\d{1,6}(?:\.\d{2})?)/);
-    if (!amountMatch)
-      amountMatch = text.match(/Amount[^\d]*(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)/i);
-    if (!amountMatch)
-      amountMatch = text.match(/(\d{1,3}(?:,\d{3})+(?:\.\d{2})?)\s*(?:บาท|THB|฿)/i);
-    if (!amountMatch)
-      amountMatch = text.match(/(\d{1,6}\.\d{2})\s*(?:บาท|THB|฿)/i);
-    if (!amountMatch)
-      amountMatch = text.match(/THB\s*(\d{1,3}(?:,\d{3})*\.\d{2})/);
+    if (!amountMatch) amountMatch = text.match(/(?:จำนวน(?:เงิน)?)[:\s]*(\d{1,6}(?:\.\d{2})?)/);
+    if (!amountMatch) amountMatch = text.match(/Amount[^\d]*(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)/i);
+    if (!amountMatch) amountMatch = text.match(/(\d{1,3}(?:,\d{3})+(?:\.\d{2})?)\s*(?:บาท|THB|฿)/i);
+    if (!amountMatch) amountMatch = text.match(/(\d{1,6}\.\d{2})\s*(?:บาท|THB|฿)/i);
+    if (!amountMatch) amountMatch = text.match(/THB\s*(\d{1,3}(?:,\d{3})*\.\d{2})/);
 
     const rawAmount = amountMatch ? amountMatch[1] : null;
     const parsedAmount = rawAmount ? parseFloat(rawAmount.replace(/,/g, '')) : 0;
@@ -185,7 +163,7 @@ async function readSlip(imageBuffer) {
 
     return { isSlip, amount, date, time, sender, receiver, text };
   } catch (err) {
-    console.error('OCR error ใน slip.js:', err.message);
+    console.error('OCR error:', err.message);
     return { isSlip: false, amount: null, date: null, time: null, sender: null, receiver: null };
   }
 }
