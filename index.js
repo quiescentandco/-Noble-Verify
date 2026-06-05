@@ -76,10 +76,10 @@ async function handleEvent(event) {
     return;
   }
 
-  // ── 2. จัดการรูปภาพสลิป (เวอร์ชันเคลียร์บั๊กเซฟตี้ ป้องกัน Error 400) ──
+  // ── 2. จัดการรูปภาพสลิป (แก้ปัญหา Token หมดอายุด้วยการใช้ Push แทน) ──
   if (event.message.type === 'image') {
     const messageId = event.message.id;
-    const replyToken = event.replyToken;
+    const targetId = event.source.groupId || event.source.roomId || event.source.userId;
     
     try {
       console.log(`📸 ได้รับภาพสลิป Message ID: ${messageId}`);
@@ -96,7 +96,6 @@ async function handleEvent(event) {
         new Promise((_, rej) => setTimeout(() => rej(new Error('OCR Timeout')), 20000)),
       ]);
       
-      // 🛡️ ป้องกันค่าวอยด์/วัตถุหลุดเข้าไปในข้อความ และตัดเครื่องหมายคำพูดหากออกมาเป็นสเตริงซ้อน
       const cleanString = (val) => {
         if (!val) return 'ไม่ระบุ';
         let str = String(val).trim();
@@ -110,7 +109,6 @@ async function handleEvent(event) {
       const receiver = cleanString(result.receiver);
 
       let replyText = '';
-      // ถ้าระบบอ่านเจอสลิป และมียอดเงินที่ไม่ใช่ค่าเริ่มต้น
       if (result.isSlip && amount !== 'ไม่ระบุ') {
         replyText = `✅ ตรวจสอบสลิปสำเร็จ\n💰 ยอดเงิน: ${amount} บาท\n📅 วันที่: ${date}\n⏰ เวลา: ${time}\n👤 ผู้โอน: ${sender}\n🏢 ผู้รับเงิน: ${receiver}`;
       } else {
@@ -119,10 +117,10 @@ async function handleEvent(event) {
 
       console.log(`📤 สั่งพิมพ์คำตอบกลับไปยัง LINE: ${replyText.replace(/\n/g, ' ')}`);
 
-      // 🎯 ส่งค่า String ล้วนที่ปลอดภัยชัวร์ 100% เข้า LINE API
-      await client.replyMessage({
-        replyToken: String(replyToken),
-        replyMessageRequest: {
+      // 🔥 เปลี่ยนมาใช้ pushMessage ส่งตรงกลับแชทเดิม ไม่ติดเงื่อนไขเวลา 3 วินาทีของโทเคน
+      await client.pushMessage({
+        to: targetId,
+        pushMessageRequest: {
           messages: [{
             type: 'text',
             text: String(replyText)
@@ -134,11 +132,10 @@ async function handleEvent(event) {
     } catch (err) {
       console.error('❌ Slip Error:', err.message);
       
-      // ข้อความแจ้งเตือนฉุกเฉินกรณีเกิดบั๊กภายในระบบ (ตัดสเตริงดิบล็อคพิกเซล ป้องกันแครชซ้อน)
       try {
-        await client.replyMessage({
-          replyToken: String(replyToken),
-          replyMessageRequest: {
+        await client.pushMessage({
+          to: targetId,
+          pushMessageRequest: {
             messages: [{ 
               type: 'text', 
               text: '⚠️ บอทได้รับภาพสลิปแล้ว แต่ระบบอ่านข้อมูลขัดข้องชั่วคราว กรุณาส่งใหม่อีกครั้งนะคะ' 
@@ -146,7 +143,7 @@ async function handleEvent(event) {
           }
         });
       } catch (fallbackErr) { 
-        console.error('❌ Fallback Reply Failed:', fallbackErr.message); 
+        console.error('❌ Fallback Push Failed:', fallbackErr.message); 
       }
     }
   }
