@@ -1,21 +1,35 @@
 const axios = require('axios');
-const FormData = require('form-data');
 
 async function readSlip(imageBuffer) {
   try {
+    // 🛠️ แปลง Buffer เป็น Blob เพื่อความเสถียรสูงสุดในการยิงเข้าหา API ปลายทาง ลดปัญหาเกิดเออเร่อ 400
+    const imageBlob = new Blob([imageBuffer], { type: 'image/jpeg' });
+    
     const form = new FormData();
-    form.append('base64Image', 'data:image/jpeg;base64,' + imageBuffer.toString('base64'));
+    form.append('file', imageBlob, 'slip.jpg'); 
     form.append('language', 'tha');
     form.append('isOverlayRequired', 'false');
     form.append('detectOrientation', 'true');
     form.append('scale', 'true');
     form.append('OCREngine', '2');
 
+    console.log('⏳ กำลังส่งรูปภาพไปประมวลผลที่ OCR Space...');
+
     const response = await axios.post(
       'https://api.ocr.space/parse/image',
       form,
-      { headers: { ...form.getHeaders(), 'apikey': process.env.OCR_API_KEY } }
+      { 
+        headers: { 
+          'apikey': process.env.OCR_API_KEY 
+        } 
+      }
     );
+
+    // เช็กฝั่งเซิร์ฟเวอร์ OCR เกิดปัญหาขัดข้องหรือไม่
+    if (response.data && response.data.IsErroredOnProcessing) {
+      console.error('❌ OCR Space แจ้งข้อผิดพลาดระบบ:', response.data.ErrorMessage);
+      throw new Error(response.data.ErrorMessage?.[0] || 'OCR Processing Error');
+    }
 
     const text = response.data?.ParsedResults?.[0]?.ParsedText || '';
     console.log('OCR Text:', text);
@@ -40,7 +54,6 @@ async function readSlip(imageBuffer) {
       if (/ผู้รับเงินสามารถ/.test(str)) return false;
       if (/^\d{3}-\d{1,2}-[xX\d]{3,}/.test(str)) return false;
       if (/^[X\d]{6,}$/i.test(str)) return false;
-      // กรองเลขบัญชีแบบ 0204xxxx6964
       if (/^\d{4}[xX]{2,}\d+$/.test(str)) return false;
       return true;
     }
@@ -49,7 +62,6 @@ async function readSlip(imageBuffer) {
       return str.replace(/^(From|To|จาก|ไปยัง|ไปถึง|ถึง)\s+/i, '').trim();
     }
 
-    // ── หาชื่อจากบรรทัดถัดไปโดยข้ามธนาคาร ──────────────
     function findNextName(startIndex) {
       for (let j = startIndex; j < Math.min(startIndex + 5, lines.length); j++) {
         const candidate = lines[j]?.trim();
@@ -58,7 +70,6 @@ async function readSlip(imageBuffer) {
       return null;
     }
 
-    // ── หาชื่อจาก prefix ─────────────────────────────────
     function findNamesByPrefix() {
       const thaiPrefixes = /^(นาย|นาง(?:สาว)?|น\.ส\.|นส\.|นส\b|บส\.|ด\.ช\.|ด\.ญ\.|บจก\.|หจก\.|บริษัท)/i;
       const engPrefixes  = /^(MR\.|MS\.|MRS\.|MISS\s)/i;
@@ -69,7 +80,6 @@ async function readSlip(imageBuffer) {
     let receiver = null;
     let mode = null;
 
-    // ── Pass 1: หา label จาก/ไปยัง/ถึง ──────────────────
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i].trim();
 
@@ -106,7 +116,6 @@ async function readSlip(imageBuffer) {
       }
     }
 
-    // ── Pass 2: Fallback prefix ───────────────────────────
     if (!sender || !receiver) {
       const unique = [...new Set(findNamesByPrefix())];
       if (unique.length >= 2) {
@@ -117,16 +126,12 @@ async function readSlip(imageBuffer) {
       }
     }
 
-    // ── Pass 3: K-Bank fallback (ลูกศร ↓ คั่น ไม่มี label) ──
-    // K-Bank layout: ชื่อผู้โอน → เลขบัญชี → ↓ → ชื่อธนาคารรับ → เลขบัญชี
     if (!sender && !receiver) {
       const arrowIdx = lines.findIndex(l => /^[↓→▼]$/.test(l));
       if (arrowIdx > 0) {
-        // หาชื่อก่อนลูกศร = sender
         for (let i = arrowIdx - 1; i >= 0; i--) {
           if (isNameLine(lines[i])) { sender = lines[i]; break; }
         }
-        // หาชื่อหลังลูกศร = receiver
         const found = findNextName(arrowIdx + 1);
         if (found) receiver = found.name;
       }
@@ -134,21 +139,15 @@ async function readSlip(imageBuffer) {
 
     // ── ดึงจำนวนเงิน ─────────────────────────────────────
     let amountMatch = null;
-    // 1) จำนวน/จำนวนเงิน + ตัวเลขมี comma
     amountMatch = text.match(/(?:จำนวน(?:เงิน)?)[:\s]*(\d{1,3}(?:,\d{3})+(?:\.\d{2})?)(?:\s*บาท)?/);
-    // 2) จำนวน/จำนวนเงิน + ตัวเลขทศนิยม ไม่ต้องมี "บาท" (SCB)
     if (!amountMatch)
       amountMatch = text.match(/(?:จำนวน(?:เงิน)?)[:\s]*(\d{1,6}(?:\.\d{2})?)/);
-    // 3) Amount label อังกฤษ
     if (!amountMatch)
       amountMatch = text.match(/Amount[^\d]*(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)/i);
-    // 4) ตัวเลขมี comma + บาท/THB/฿
     if (!amountMatch)
       amountMatch = text.match(/(\d{1,3}(?:,\d{3})+(?:\.\d{2})?)\s*(?:บาท|THB|฿)/i);
-    // 5) ตัวเลขทศนิยม + บาท
     if (!amountMatch)
       amountMatch = text.match(/(\d{1,6}\.\d{2})\s*(?:บาท|THB|฿)/i);
-    // 6) THB นำหน้า
     if (!amountMatch)
       amountMatch = text.match(/THB\s*(\d{1,3}(?:,\d{3})*\.\d{2})/);
 
@@ -156,7 +155,6 @@ async function readSlip(imageBuffer) {
     const parsedAmount = rawAmount ? parseFloat(rawAmount.replace(/,/g, '')) : 0;
     const amount = parsedAmount >= 1 ? rawAmount : null;
 
-    // ── ดึงวันที่ ─────────────────────────────────────────
     const dateMatch =
       text.match(/(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})/) ||
       text.match(/(\d{4}[-\/]\d{1,2}[-\/]\d{1,2})/) ||
@@ -164,13 +162,11 @@ async function readSlip(imageBuffer) {
       text.match(/(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s*\d{2,4})/i);
     const date = dateMatch ? dateMatch[1] : null;
 
-    // ── ดึงเวลา ───────────────────────────────────────────
     const timeMatch =
       text.match(/(\d{1,2}:\d{2}:\d{2})\s*(?:AM|PM|น\.)?/i) ||
       text.match(/(\d{1,2}:\d{2})\s*(?:AM|PM|น\.)?/i);
     const time = timeMatch ? timeMatch[1] : null;
 
-    // ── เช็คสลิปจริง ──────────────────────────────────────
     const slipKeywords = [
       'โอนเงินสำเร็จ','โอนเงิน','สำเร็จ','จำนวนเงิน','จำนวน',
       'รหัสอ้างอิง','เลขที่อ้างอิง','เลขที่รายการ','หมายเลขอ้างอิง',
@@ -189,7 +185,7 @@ async function readSlip(imageBuffer) {
 
     return { isSlip, amount, date, time, sender, receiver, text };
   } catch (err) {
-    console.error('OCR error:', err);
+    console.error('OCR error ใน slip.js:', err.message);
     return { isSlip: false, amount: null, date: null, time: null, sender: null, receiver: null };
   }
 }
