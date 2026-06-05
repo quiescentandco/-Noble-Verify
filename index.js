@@ -149,16 +149,16 @@ function buildSlipSuccessCard({ amount, date, time, sender, receiver }) {
             ],
           },
           {
-            type: 'box', layout: 'vertical', paddingAll: '10px', paddingBottom: '13px', backgroundColor: '#00c851',
+            type: 'box', layout: 'vertical', paddingAll: '10px', paddingBottom: '13px', backgroundColor: '#3A241B',
             contents: [
-              { type: 'text', text: 'สลิปถูกต้อง', color: '#ffffff', size: 'xl', weight: 'bold' },
-              { type: 'text', text: 'Noble Verify · Pride Month 2026', color: '#ffffff', size: 'xs', margin: 'sm' },
+              { type: 'text', text: 'สลิปถูกต้อง', color: '#C8A46B', size: 'xl', weight: 'bold' },
+              { type: 'text', text: 'Noble Verify · Pride Month 2026', color: '#C8A46B', size: 'xs', margin: 'sm' },
             ],
           },
         ],
       },
       body: {
-        type: 'box', layout: 'vertical', spacing: 'md', backgroundColor: '#ffffff', paddingAll: '10px',
+        type: 'box', layout: 'vertical', spacing: 'md', backgroundColor: '#F8F5F0', paddingAll: '10px',
         contents: [
           {
             type: 'box', layout: 'horizontal', alignItems: 'center',
@@ -207,7 +207,7 @@ function buildSlipSuccessCard({ amount, date, time, sender, receiver }) {
               { type: 'box', layout: 'vertical', flex: 1, height: '4px', backgroundColor: '#8B00FF', contents: [] },
             ],
           },
-          { type: 'box', layout: 'horizontal', paddingAll: '5px', backgroundColor: '#ffffff', alignItems: 'center', contents: [
+          { type: 'box', layout: 'horizontal', paddingAll: '5px', backgroundColor: '#F8F5F0', alignItems: 'center', contents: [
             { type: 'text', text: '🔴🟠🟡🟢🔵🟣', size: 'xxs', flex: 0 },
             { type: 'text', text: ' Love is love ', size: 'xxs', color: '#aaaaaa', flex: 1 },
           ]},
@@ -238,8 +238,8 @@ function buildSlipFailCard() {
             ],
           },
           { type: 'box', layout: 'vertical', backgroundColor: '#E74C3C', paddingAll: '10px', paddingBottom: '13px', contents: [
-            { type: 'text', text: 'สลิปไม่ถูกต้อง', color: '#ffffff', size: 'xl', weight: 'bold' },
-            { type: 'text', text: 'Noble Verify · Pride Month 2026', color: '#ffcccc', size: 'xs', margin: 'sm' },
+            { type: 'text', text: 'สลิปไม่ถูกต้อง', color: '#C8A46B', size: 'xl', weight: 'bold' },
+            { type: 'text', text: 'Noble Verify · Pride Month 2026', color: '#C8A46B', size: 'xs', margin: 'sm' },
           ]},
         ],
       },
@@ -251,7 +251,7 @@ function buildSlipFailCard() {
         ],
       },
       footer: {
-        type: 'box', layout: 'horizontal', paddingAll: '5px', backgroundColor: '#fff5f5', alignItems: 'center',
+        type: 'box', layout: 'horizontal', paddingAll: '5px', backgroundColor: '#F8F5F0', alignItems: 'center',
         contents: [
           { type: 'text', text: '🔴🟠🟡🟢🔵🟣', size: 'xxs', flex: 0 },
           { type: 'text', text: ' Love is love ', size: 'xxs', color: '#aaaaaa', flex: 1 },
