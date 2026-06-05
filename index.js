@@ -163,7 +163,7 @@ function buildSlipSuccessCard({ amount, date, time, sender, receiver }) {
           {
             type: 'box', layout: 'horizontal', alignItems: 'center',
             contents: [
-              { type: 'box', layout: 'vertical', width: '9px', height: '9px', cornerRadius: '5px', backgroundColor: '#00C851', contents: [] },
+              { type: 'box', layout: 'vertical', width: '9px', height: '9px', cornerRadius: '5px', backgroundColor: '#C8A46B', contents: [] },
               { type: 'text', text: ' โอนเงินสำเร็จ', size: 'sm', color: '#C8A46B', weight: 'bold' },
             ],
           },
