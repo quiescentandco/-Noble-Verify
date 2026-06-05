@@ -76,7 +76,7 @@ async function handleEvent(event) {
     return;
   }
 
-  // ── 2. จัดการรูปภาพสลิป (แก้ปัญหา Token หมดอายุด้วยการใช้ Push แทน) ──
+  // ── 2. จัดการรูปภาพสลิป (แก้ไขโครงสร้าง pushMessageRequest ให้ตรงตาม LINE SDK v8) ──
   if (event.message.type === 'image') {
     const messageId = event.message.id;
     const targetId = event.source.groupId || event.source.roomId || event.source.userId;
@@ -117,9 +117,9 @@ async function handleEvent(event) {
 
       console.log(`📤 สั่งพิมพ์คำตอบกลับไปยัง LINE: ${replyText.replace(/\n/g, ' ')}`);
 
-      // 🔥 เปลี่ยนมาใช้ pushMessage ส่งตรงกลับแชทเดิม ไม่ติดเงื่อนไขเวลา 3 วินาทีของโทเคน
+      // 🎯 แก้จุดสำคัญตรงนี้: ใส่โครงสร้าง pushMessageRequest ครอบตัวแปรตามระเบียบ LINE SDK v8
       await client.pushMessage({
-        to: targetId,
+        to: String(targetId),
         pushMessageRequest: {
           messages: [{
             type: 'text',
@@ -127,14 +127,15 @@ async function handleEvent(event) {
           }]
         }
       });
-      console.log('✨ บอทตอบกลับหาลูกค้าเรียบร้อยโดยไม่มีข้อผิดพลาด');
+      console.log('✨ บอทตอบกลับข้อมูลสลิปเข้าห้องแชทเรียบร้อยโดยไม่มีข้อผิดพลาด');
       
     } catch (err) {
       console.error('❌ Slip Error:', err.message);
       
+      // 🎯 ตัวสำรอง (Fallback) ก็ต้องใช้โครงสร้าง pushMessageRequest ให้ถูกต้องด้วยเช่นกัน
       try {
         await client.pushMessage({
-          to: targetId,
+          to: String(targetId),
           pushMessageRequest: {
             messages: [{ 
               type: 'text', 
