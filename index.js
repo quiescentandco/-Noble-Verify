@@ -11,6 +11,7 @@ const config = {
   channelSecret: process.env.LINE_CHANNEL_SECRET,
 };
 
+// ประกาศ Client ตามมาตรฐาน LINE SDK v8
 const client = new line.messagingApi.MessagingApiClient(config);
 const blobClient = new line.messagingApi.MessagingApiBlobClient(config);
 
@@ -18,6 +19,7 @@ const GROUP_IDS = process.env.LINE_GROUP_IDS
   ? process.env.LINE_GROUP_IDS.split(',').map(id => id.trim())
   : [process.env.LINE_GROUP_ID];
 
+// ฟังก์ชันประกาศอัตโนมัติ (จำเป็นต้องใช้ pushMessage เพราะรันตามเวลา ไม่มี replyToken จากแชท)
 async function pushToAllGroups(messages) {
   for (const groupId of GROUP_IDS) {
     try {
@@ -57,7 +59,7 @@ async function handleEvent(event) {
 
   if (event.type !== 'message') return;
 
-  // ── 1. จัดการข้อความตัวอักษร ──
+  // ── 1. จัดการข้อความตัวอักษร (ใช้ replyMessage ฟรี 100%) ──
   if (event.message.type === 'text') {
     const text = event.message.text.trim();
     if (text === 'ยอดหนี้' || text === 'สรุปยอด') {
@@ -66,23 +68,29 @@ async function handleEvent(event) {
       return;
     }
     if (text === 'เช้า') {
-      await client.replyMessage({ replyToken: event.replyToken, replyMessageRequest: { messages: [morningMessage()] } });
+      await client.replyMessage({ 
+        replyToken: event.replyToken, 
+        replyMessageRequest: { messages: [morningMessage()] } 
+      });
       return;
     }
     if (text === 'คืน') {
-      await client.replyMessage({ replyToken: event.replyToken, replyMessageRequest: { messages: [nightMessage()] } });
+      await client.replyMessage({ 
+        replyToken: event.replyToken, 
+        replyMessageRequest: { messages: [nightMessage()] } 
+      });
       return;
     }
     return;
   }
 
-  // ── 2. จัดการรูปภาพสลิป (แก้ไขโครงสร้าง pushMessageRequest ให้ตรงตาม LINE SDK v8) ──
+  // ── 2. จัดการรูปภาพสลิป (ใช้ replyMessage โครงสร้าง v8 ป้องกัน Error 400 เพื่อใช้งานฟรี) ──
   if (event.message.type === 'image') {
     const messageId = event.message.id;
-    const targetId = event.source.groupId || event.source.roomId || event.source.userId;
+    const replyToken = event.replyToken; 
     
     try {
-      console.log(`📸 ได้รับภาพสลิป Message ID: ${messageId}`);
+      console.log(`📸 ได้รับภาพสลิป Message ID: ${messageId} กำลังดึงไฟล์...`);
       const responseStream = await blobClient.getMessageContent(messageId);
       
       const chunks = [];
@@ -91,11 +99,13 @@ async function handleEvent(event) {
       }
       const imageBuffer = Buffer.concat(chunks);
       
+      console.log('🔄 ดึงไฟล์สำเร็จ ส่งให้ระบบ OCR ประมวลผล...');
       const result = await Promise.race([
         readSlip(imageBuffer),
         new Promise((_, rej) => setTimeout(() => rej(new Error('OCR Timeout')), 20000)),
       ]);
       
+      // ป้องกันข้อความหลุดเป็นค่าว่างเพื่อไม่ให้ LINE ปฏิเสธ Request
       const cleanString = (val) => {
         if (!val) return 'ไม่ระบุ';
         let str = String(val).trim();
@@ -115,28 +125,28 @@ async function handleEvent(event) {
         replyText = `❌ ไม่สามารถอ่านยอดเงินบนสลิปได้ชัดเจน หรือรูปภาพนี้ไม่ใช่สลิปโอนเงินที่ถูกต้อง กรุณาลองใหม่อีกครั้งนะคะ`;
       }
 
-      console.log(`📤 สั่งพิมพ์คำตอบกลับไปยัง LINE: ${replyText.replace(/\n/g, ' ')}`);
+      console.log(`📤 สั่งส่งข้อความตอบกลับฟรี (Reply): ${replyText.replace(/\n/g, ' ')}`);
 
-      // 🎯 แก้จุดสำคัญตรงนี้: ใส่โครงสร้าง pushMessageRequest ครอบตัวแปรตามระเบียบ LINE SDK v8
-      await client.pushMessage({
-        to: String(targetId),
-        pushMessageRequest: {
+      // 🎯 ส่งกลับด้วย replyMessage โครงสร้างตรงตามเกณฑ์ SDK v8 เป๊ะ 100%
+      await client.replyMessage({
+        replyToken: String(replyToken),
+        replyMessageRequest: {
           messages: [{
             type: 'text',
             text: String(replyText)
           }]
         }
       });
-      console.log('✨ บอทตอบกลับข้อมูลสลิปเข้าห้องแชทเรียบร้อยโดยไม่มีข้อผิดพลาด');
+      console.log('✨ บอทตอบกลับแบบไม่เสียโควตาข้อความเรียบร้อยแล้ว');
       
     } catch (err) {
       console.error('❌ Slip Error:', err.message);
       
-      // 🎯 ตัวสำรอง (Fallback) ก็ต้องใช้โครงสร้าง pushMessageRequest ให้ถูกต้องด้วยเช่นกัน
+      // ตัวสำรองกรณีเกิด Error ก็ใช้โครงสร้าง replyMessage ของ SDK v8 เพื่อความปลอดภัย
       try {
-        await client.pushMessage({
-          to: String(targetId),
-          pushMessageRequest: {
+        await client.replyMessage({
+          replyToken: String(replyToken),
+          replyMessageRequest: {
             messages: [{ 
               type: 'text', 
               text: '⚠️ บอทได้รับภาพสลิปแล้ว แต่ระบบอ่านข้อมูลขัดข้องชั่วคราว กรุณาส่งใหม่อีกครั้งนะคะ' 
@@ -144,7 +154,7 @@ async function handleEvent(event) {
           }
         });
       } catch (fallbackErr) { 
-        console.error('❌ Fallback Push Failed:', fallbackErr.message); 
+        console.error('❌ Fallback Reply Failed:', fallbackErr.message); 
       }
     }
   }
@@ -155,7 +165,7 @@ function morningMessage() {
 }
 
 function nightMessage() {
-  return { type: 'text', text: `📢 แจ้งลูกค้าบ้านตระกูลจางทุกท่าน\nพรุ่งนี้เป็นรอบส่งยอดประจำวัน กรุณาแจ้งเวลาส่งยอดก่อนเวลา 09:00 น.\n⏰ กำหนดชำระไม่เกิน 12:00 น. หากเกินเวลาที่กำหนด มีค่าปรับ 50 บาท / ชั่วโมง\n⚠️ หากไม่แจ้งก่อน 09:00 น. ทางบ้านขออนุญาตกดโกรธหน้าเฟส และไม่สามารถยกเลิกได้จนกว่าจะปิดยอดเรียบร้อย\n🙏 ขอความร่วมมือแจ้งเวลาและปิดยอดตรงเวลา เพื่อความสะดวกในการดูแลคิวและระบบของบ้านตระกูลจาง\nขอบคุณลูกค้าทุกท่านที่ให้ความร่วมมือเสมอ 🤍\n🌙 Good Night & Have a nice day na ka ✨💤 พักผ่อนเยอะๆ ดูแลตัวเองด้วยน้า 🫶🏻🤍` };
+  return { type: 'text', text: `📢 แจ้งลูกค้าบ้านตระกูลจางทุกท่าน\nพรุ่งนี้เป็นรอบส่งยอดประจำวัน กรุณาแจ้งเวลาส่งยอดก่อนเวลา 09:00 น.\n⏰ 定หนดชำระไม่เกิน 12:00 น. หากเกินเวลาที่กำหนด มีค่าปรับ 50 บาท / ชั่วโมง\n⚠️ หากไม่แจ้งก่อน 09:00 น. ทางบ้านขออนุญาตกดโกรธหน้าเฟส และไม่สามารถยกเลิกได้จนกว่าจะปิดยอดเรียบร้อย\n🙏 ขอความร่วมมือแจ้งเวลาและปิดยอดตรงเวลา เพื่อความสะดวกในการดูแลคิวและระบบของบ้านตระกูลจาง\nขอบคุณลูกค้าทุกท่านที่ให้ความร่วมมือเสมอ 🤍\n🌙 Good Night & Have a nice day na ka ✨💤 พักผ่อนเยอะๆ ดูแลตัวเองด้วยน้า 🫶🏻🤍` };
 }
 
 cron.schedule('0 6 * * *', async () => {
@@ -167,4 +177,4 @@ cron.schedule('0 21 * * *', async () => {
 }, { timezone: 'Asia/Bangkok' });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🚀 บอทเวอร์ชันแก้บั๊กสลิปเสถียรสูงสุด รันที่พอร์ต ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 บอทเวอร์ชันใช้ Reply ฟรี ไม่จำกัดข้อความ พร้อมรันพอร์ต ${PORT}`));
