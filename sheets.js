@@ -5,13 +5,13 @@ const auth = new google.auth.GoogleAuth({
   credentials: {
     client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
     private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+    private_key_id: process.env.GOOGLE_PRIVATE_KEY_ID,
   },
   scopes: ['https://www.googleapis.com/auth/spreadsheets'],
 });
 
 const sheets = google.sheets({ version: 'v4', auth });
 
-// ── Sheet1: ดึงรายการหนี้ ────────────────────────────────────────────────────
 async function getUnpaidList() {
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: process.env.GOOGLE_SHEET_ID,
@@ -28,7 +28,6 @@ async function getUnpaidList() {
     }));
 }
 
-// ── Sheet2: เช็คสลิปซ้ำ ──────────────────────────────────────────────────────
 async function isSlipDuplicate(refNo) {
   if (!refNo) return false;
   try {
