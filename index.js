@@ -3,7 +3,7 @@ const express = require('express');
 const line = require('@line/bot-sdk');
 const cron = require('node-cron');
 const axios = require('axios');
-const { getUnpaidList } = require('./sheets');
+const { getUnpaidList, isSlipDuplicate, saveSlipRef } = require('./sheets');
 const { sendDebtSummary } = require('./notify');
 const { readSlip } = require('./slip');
 
@@ -35,7 +35,6 @@ async function pushToAllGroups(messages) {
   }
 }
 
-// ── Helper: safe reply ─────────────────────────────────────────────────────
 async function safeReply(replyToken, messages) {
   try {
     await client.replyMessage({ replyToken, messages });
@@ -71,7 +70,6 @@ async function handleEvent(event) {
 
   if (event.type !== 'message') return;
 
-  // ── Text ────────────────────────────────────────────────
   if (event.message.type === 'text') {
     const text = event.message.text.trim();
     if (text === 'ยอดหนี้' || text === 'สรุปยอด') {
@@ -90,7 +88,6 @@ async function handleEvent(event) {
     return;
   }
 
-  // ── Image (สลิป) ─────────────────────────────────────────
   if (event.message.type === 'image') {
     const messageId = event.message.id;
     const replyToken = event.replyToken;
@@ -102,18 +99,30 @@ async function handleEvent(event) {
       const imageBuffer = Buffer.concat(chunks);
       console.log('🖼️ Image size:', imageBuffer.length, 'bytes');
 
-      const { isSlip, amount, date, time, sender, receiver } = await Promise.race([
+      const { isSlip, amount, date, time, sender, receiver, refNo } = await Promise.race([
         readSlip(imageBuffer),
         new Promise((_, rej) => setTimeout(() => rej(new Error('OCR timeout after 15s')), 15000)),
       ]);
 
-      console.log('📋 OCR result:', { isSlip, amount, date, time, sender, receiver });
+      console.log('📋 OCR result:', { isSlip, amount, date, time, sender, receiver, refNo });
 
-      await safeReply(replyToken, [
-        (isSlip && amount)
-          ? buildSlipSuccessCard({ amount, date, time, sender, receiver })
-          : buildSlipFailCard()
-      ]);
+      if (!isSlip || !amount) {
+        await safeReply(replyToken, [buildSlipFailCard()]);
+        return;
+      }
+
+      // ── เช็คสลิปซ้ำ ──────────────────────────────────────
+      if (refNo) {
+        const isDuplicate = await isSlipDuplicate(refNo);
+        if (isDuplicate) {
+          console.log('⚠️ สลิปซ้ำ Ref:', refNo);
+          await safeReply(replyToken, [buildSlipDuplicateCard({ amount, date, time, sender, refNo })]);
+          return;
+        }
+        await saveSlipRef({ refNo, amount, sender, receiver, date, time });
+      }
+
+      await safeReply(replyToken, [buildSlipSuccessCard({ amount, date, time, sender, receiver, refNo })]);
 
     } catch (err) {
       console.error('❌ Slip error:', err.message);
@@ -121,13 +130,12 @@ async function handleEvent(event) {
         await safeReply(replyToken, [
           { type: 'text', text: '⚠️ ตรวจสอบไม่สำเร็จ กรุณาส่งสลิปใหม่อีกครั้งนะคะ' }
         ]);
-      } catch (_) { /* safeReply log แล้ว */ }
+      } catch (_) {}
     }
   }
 }
 
-// ── Flex Cards ──────────────────────────────────────────────────────────────
-function buildSlipSuccessCard({ amount, date, time, sender, receiver }) {
+function buildSlipSuccessCard({ amount, date, time, sender, receiver, refNo }) {
   const safe = v => (v && String(v).trim()) || 'ไม่พบข้อมูล';
   return {
     type: 'flex',
@@ -191,6 +199,13 @@ function buildSlipSuccessCard({ amount, date, time, sender, receiver }) {
             { type: 'text', text: 'เวลา', size: 'sm', color: '#888888', flex: 4 },
             { type: 'text', text: safe(time), size: 'sm', color: '#333333', flex: 6, align: 'end' },
           ]},
+          ...(refNo ? [
+            { type: 'separator', color: '#eeeeee' },
+            { type: 'box', layout: 'horizontal', contents: [
+              { type: 'text', text: 'เลข Ref', size: 'xxs', color: '#aaaaaa', flex: 4 },
+              { type: 'text', text: refNo, size: 'xxs', color: '#aaaaaa', flex: 6, align: 'end', wrap: true },
+            ]},
+          ] : []),
         ],
       },
       footer: {
@@ -208,7 +223,92 @@ function buildSlipSuccessCard({ amount, date, time, sender, receiver }) {
             ],
           },
           { type: 'box', layout: 'horizontal', paddingAll: '5px', backgroundColor: '#F8F5F0', alignItems: 'center', contents: [
-            
+            { type: 'text', text: ' 🌈 Love is Love ', size: 'xxs', color: '#C8A46B', flex: 1 },
+          ]},
+        ],
+      },
+    },
+  };
+}
+
+function buildSlipDuplicateCard({ amount, date, time, sender, refNo }) {
+  const safe = v => (v && String(v).trim()) || 'ไม่พบข้อมูล';
+  return {
+    type: 'flex',
+    altText: '⚠️ สลิปซ้ำ ไม่รับการชำระ',
+    contents: {
+      type: 'bubble',
+      header: {
+        type: 'box', layout: 'vertical', paddingAll: '0px',
+        contents: [
+          {
+            type: 'box', layout: 'horizontal', paddingAll: '0px', height: '6px',
+            contents: [
+              { type: 'box', layout: 'vertical', flex: 1, height: '6px', backgroundColor: '#FF0018', contents: [] },
+              { type: 'box', layout: 'vertical', flex: 1, height: '6px', backgroundColor: '#FF7A00', contents: [] },
+              { type: 'box', layout: 'vertical', flex: 1, height: '6px', backgroundColor: '#FFFF00', contents: [] },
+              { type: 'box', layout: 'vertical', flex: 1, height: '6px', backgroundColor: '#00C800', contents: [] },
+              { type: 'box', layout: 'vertical', flex: 1, height: '6px', backgroundColor: '#0000FF', contents: [] },
+              { type: 'box', layout: 'vertical', flex: 1, height: '6px', backgroundColor: '#8B00FF', contents: [] },
+            ],
+          },
+          {
+            type: 'box', layout: 'vertical', paddingAll: '10px', paddingBottom: '13px', backgroundColor: '#B7791F',
+            contents: [
+              { type: 'text', text: '⚠️ สลิปซ้ำ', color: '#ffffff', size: 'xl', weight: 'bold' },
+              { type: 'text', text: 'Noble Verify · Pride Month 2026', color: '#ffe4a0', size: 'xs', margin: 'sm' },
+            ],
+          },
+        ],
+      },
+      body: {
+        type: 'box', layout: 'vertical', spacing: 'md', backgroundColor: '#FFFBF0', paddingAll: '10px',
+        contents: [
+          { type: 'text', text: 'สลิปนี้เคยถูกใช้แล้ว', size: 'md', weight: 'bold', color: '#B7791F', align: 'center' },
+          { type: 'text', text: 'ไม่รับการชำระซ้ำนะคะ', size: 'sm', color: '#666666', align: 'center', margin: 'sm' },
+          { type: 'separator', color: '#eeeeee', margin: 'md' },
+          { type: 'box', layout: 'horizontal', contents: [
+            { type: 'text', text: 'ผู้โอนเงิน', size: 'sm', color: '#888888', flex: 4 },
+            { type: 'text', text: safe(sender), size: 'sm', color: '#333333', weight: 'bold', flex: 6, wrap: true, align: 'end' },
+          ]},
+          { type: 'separator', color: '#eeeeee' },
+          { type: 'box', layout: 'horizontal', alignItems: 'center', backgroundColor: '#fff3cd', cornerRadius: '5px', paddingAll: '7px', contents: [
+            { type: 'text', text: 'จำนวนเงิน', size: 'sm', color: '#888888', flex: 4 },
+            { type: 'text', text: `${safe(amount)} บาท`, size: 'sm', weight: 'bold', color: '#B7791F', flex: 6, align: 'end' },
+          ]},
+          { type: 'separator', color: '#eeeeee' },
+          { type: 'box', layout: 'horizontal', contents: [
+            { type: 'text', text: 'วันที่', size: 'sm', color: '#888888', flex: 4 },
+            { type: 'text', text: safe(date), size: 'sm', color: '#333333', flex: 6, align: 'end' },
+          ]},
+          { type: 'box', layout: 'horizontal', contents: [
+            { type: 'text', text: 'เวลา', size: 'sm', color: '#888888', flex: 4 },
+            { type: 'text', text: safe(time), size: 'sm', color: '#333333', flex: 6, align: 'end' },
+          ]},
+          ...(refNo ? [
+            { type: 'separator', color: '#eeeeee' },
+            { type: 'box', layout: 'horizontal', contents: [
+              { type: 'text', text: 'เลข Ref', size: 'xxs', color: '#aaaaaa', flex: 4 },
+              { type: 'text', text: refNo, size: 'xxs', color: '#aaaaaa', flex: 6, align: 'end', wrap: true },
+            ]},
+          ] : []),
+        ],
+      },
+      footer: {
+        type: 'box', layout: 'vertical', paddingAll: '0px',
+        contents: [
+          {
+            type: 'box', layout: 'horizontal', paddingAll: '0px', height: '4px',
+            contents: [
+              { type: 'box', layout: 'vertical', flex: 1, height: '4px', backgroundColor: '#FF0018', contents: [] },
+              { type: 'box', layout: 'vertical', flex: 1, height: '4px', backgroundColor: '#FF7A00', contents: [] },
+              { type: 'box', layout: 'vertical', flex: 1, height: '4px', backgroundColor: '#FFFF00', contents: [] },
+              { type: 'box', layout: 'vertical', flex: 1, height: '4px', backgroundColor: '#00C800', contents: [] },
+              { type: 'box', layout: 'vertical', flex: 1, height: '4px', backgroundColor: '#0000FF', contents: [] },
+              { type: 'box', layout: 'vertical', flex: 1, height: '4px', backgroundColor: '#8B00FF', contents: [] },
+            ],
+          },
+          { type: 'box', layout: 'horizontal', paddingAll: '5px', backgroundColor: '#FFFBF0', alignItems: 'center', contents: [
             { type: 'text', text: ' 🌈 Love is Love ', size: 'xxs', color: '#C8A46B', flex: 1 },
           ]},
         ],
@@ -268,7 +368,6 @@ function nightMessage() {
   return { type: 'text', text: `📢 แจ้งลูกค้าบ้านตระกูลจางทุกท่าน\nพรุ่งนี้เป็นรอบส่งยอดประจำวัน กรุณาแจ้งเวลาส่งยอดก่อนเวลา 09:00 น.\n⏰ กำหนดชำระไม่เกิน 12:00 น. หากเกินเวลาที่กำหนด มีค่าปรับ 50 บาท / ชั่วโมง\n⚠️ หากไม่แจ้งก่อน 09:00 น. ทางบ้านขออนุญาตกดโกรธหน้าเฟส และไม่สามารถยกเลิกได้จนกว่าจะปิดยอดเรียบร้อย\n🙏 ขอความร่วมมือแจ้งเวลาและปิดยอดตรงเวลา เพื่อความสะดวกในการดูแลคิวและระบบของบ้านตระกูลจาง\nขอบคุณลูกค้าทุกท่านที่ให้ความร่วมมือเสมอ 🤍\n🌙 Good Night & Have a nice day na ka ✨💤 พักผ่อนเยอะๆ ดูแลตัวเองด้วยน้า 🫶🏻🤍` };
 }
 
-// ── Cron ────────────────────────────────────────────────────────────────────
 cron.schedule('0 6 * * *', async () => {
   console.log('⏰ Cron 06:00 เช้า');
   await pushToAllGroups([morningMessage()]);
