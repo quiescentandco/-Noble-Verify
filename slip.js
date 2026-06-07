@@ -32,7 +32,7 @@ async function readSlip(imageBuffer) {
       if (/^[Xx]{2,}/i.test(str)) return false;
       if (/^\d{3}[-X\s]/i.test(str)) return false;
       if (/^x{1,3}-[\dxX]/i.test(str)) return false;
-      if (/^(Bangkok Bank|Kasikorn|SCB|Krungthai|กรุงไทย|Krungsri|KKP|Siam Commercial Bank|UOB|UOB STASH|TMRW|ยูโอบี|TTB|GSB|ออมสิน|ธ\.กสิกรไทย|ธ\.ออมสิน|ธนาคาร|ธนาคารออมสิน|ธนาคารยูโอบี|กรุงเทพ|ไทยพาณิชย์|กสิกร|K\+)/i.test(str)) return false;
+      if (/^(Bangkok Bank|Kasikorn|SCB|Krungthai|กรุงไทย|Krungsri|KKP|Siam Commercial Bank|UOB|UOB STASH|TMRW|ยูโอบี|TTB|ttb|ทหารไทยธนชาต|TMBThanachart|GSB|ออมสิน|ธ\.กสิกรไทย|ธ\.ออมสิน|ธนาคาร|ธนาคารออมสิน|ธนาคารยูโอบี|กรุงเทพ|ไทยพาณิชย์|กสิกร|K\+)/i.test(str)) return false;
       if (/^(From|To|Fee|Amount|จาก|ไปยัง|ไปถึง|ถึง|จำนวนเงิน|จำนวน|ค่าธรรมเนียม|ฟรีค่าธรรมเนียม|วันที่|รหัสอ้างอิง|เลขที่รายการ|หมายเลขอ้างอิง|หมายเหตุ|โน้ตช่วยจำ|สแกน|สแกนตรวจสอบสลิป|Bank reference|Transaction|วันที่ทำรายการ|รหัสทำรายการ|ราคารอบอ|QR Code)(\s|:)?$/i.test(str)) return false;
       if (/^0\.00/.test(str)) return false;
       if (/^THB\s/i.test(str)) return false;
@@ -121,13 +121,20 @@ async function readSlip(imageBuffer) {
       }
     }
 
+    // ── ดึงยอดเงิน ───────────────────────────────────────────────────────────
     let amountMatch = null;
+    // มี label นำหน้า
     amountMatch = text.match(/(?:จำนวน(?:เงิน)?)[:\s]*(\d{1,3}(?:,\d{3})+(?:\.\d{2})?)(?:\s*บาท)?/);
     if (!amountMatch) amountMatch = text.match(/(?:จำนวน(?:เงิน)?)[:\s]*(\d{1,6}(?:\.\d{2})?)/);
     if (!amountMatch) amountMatch = text.match(/Amount[^\d]*(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)/i);
+    // มี unit ต่อท้าย
     if (!amountMatch) amountMatch = text.match(/(\d{1,3}(?:,\d{3})+(?:\.\d{2})?)\s*(?:บาท|THB|฿)/i);
     if (!amountMatch) amountMatch = text.match(/(\d{1,6}\.\d{2})\s*(?:บาท|THB|฿)/i);
     if (!amountMatch) amountMatch = text.match(/THB\s*(\d{1,3}(?:,\d{3})*\.\d{2})/);
+    // ดักจับตัวเลขเปล่าๆ เช่น ttb ที่แสดง 80.00 โดดๆ บรรทัดเดียว
+    if (!amountMatch) amountMatch = text.match(/^(\d{1,3}(?:,\d{3})*\.\d{2})$/m);
+    // ดักจับตัวเลขที่มีจุลภาคและจุดทศนิยม เช่น 1,234.56
+    if (!amountMatch) amountMatch = text.match(/\b(\d{1,3}(?:,\d{3})+\.\d{2})\b/);
 
     const rawAmount = amountMatch ? amountMatch[1] : null;
     const parsedAmount = rawAmount ? parseFloat(rawAmount.replace(/,/g, '')) : 0;
@@ -145,15 +152,26 @@ async function readSlip(imageBuffer) {
       text.match(/(\d{1,2}:\d{2})\s*(?:AM|PM|น\.)?/i);
     const time = timeMatch ? timeMatch[1] : null;
 
+    // ── ดึงเลข Ref ───────────────────────────────────────────────────────────
+    let refMatch =
+      text.match(/(?:รหัสอ้างอิง|หมายเลขอ้างอิง|เลขที่อ้างอิง)[:\s]*([A-Z0-9]{8,})/i) ||
+      text.match(/(?:เลขที่รายการ|รหัสทำรายการ)[:\s]*([A-Z0-9]{8,})/i) ||
+      text.match(/(?:Bank\s*[Rr]ef(?:erence)?|Ref(?:erence)?(?:\s*No)?\.?)[:\s]*([A-Z0-9]{8,})/i) ||
+      text.match(/(?:Transaction\s*(?:ID|No)?\.?)[:\s]*([A-Z0-9]{8,})/i) ||
+      text.match(/\b(\d{15,})\b/); // เลขยาว 15+ หลัก เช่น ของ ttb
+    const refNo = refMatch ? refMatch[1].trim() : null;
+    console.log('📌 Ref No:', refNo);
+
     const slipKeywords = [
       'โอนเงินสำเร็จ','โอนเงิน','สำเร็จ','จำนวนเงิน','จำนวน',
       'รหัสอ้างอิง','เลขที่อ้างอิง','เลขที่รายการ','หมายเลขอ้างอิง',
       'พร้อมเพย์','ธนาคาร','ฟรีค่าธรรมเนียม',
       'กรุงไทย','กสิกร','ไทยพาณิชย์','กรุงเทพ',
       'ออมสิน','ทหารไทย','ธนชาต','กรุงศรี',
+      'ทหารไทยธนชาต','TMBThanachart','ttb bank',
       'Transaction','Transfer','Success','successful',
       'Reference','PromptPay','Payment',
-      'SCB','KBANK','KTB','BBL','BAY','TTB','UOB','TMRW',
+      'SCB','KBANK','KTB','BBL','BAY','TTB','ttb','UOB','TMRW',
       'Krungthai','Bangkok Bank','Kasikorn','Krungsri','KKP',
       'GSB','ไปยัง','ไปถึง','ถึง','รหัสทำรายการ',
       'รายการโอนเงินสำเร็จ','แกนกลางการเกษตร',
@@ -161,10 +179,10 @@ async function readSlip(imageBuffer) {
 
     const isSlip = slipKeywords.some(k => text.toLowerCase().includes(k.toLowerCase()));
 
-    return { isSlip, amount, date, time, sender, receiver, text };
+    return { isSlip, amount, date, time, sender, receiver, refNo, text };
   } catch (err) {
     console.error('OCR error:', err.message);
-    return { isSlip: false, amount: null, date: null, time: null, sender: null, receiver: null };
+    return { isSlip: false, amount: null, date: null, time: null, sender: null, receiver: null, refNo: null };
   }
 }
 
