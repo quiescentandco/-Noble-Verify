@@ -1,10 +1,11 @@
 require('dotenv').config();
 const { google } = require('googleapis');
-const path = require('path');
 
 const auth = new google.auth.GoogleAuth({
-  keyFile: path.join(__dirname, 'service-account.json'),
-  // เพิ่ม write scope เพื่อบันทึก ref สลิป
+  credentials: {
+    client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
+    private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+  },
   scopes: ['https://www.googleapis.com/auth/spreadsheets'],
 });
 
@@ -28,7 +29,6 @@ async function getUnpaidList() {
 }
 
 // ── Sheet2: เช็คสลิปซ้ำ ──────────────────────────────────────────────────────
-// โครงสร้าง Sheet2: | Ref No | จำนวน | ผู้โอน | ผู้รับ | วันที่ | เวลา | บันทึกเมื่อ |
 async function isSlipDuplicate(refNo) {
   if (!refNo) return false;
   try {
