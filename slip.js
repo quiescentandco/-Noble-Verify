@@ -26,6 +26,69 @@ async function readSlip(imageBuffer) {
     const lines = text.split('\n').map(l => l.trim()).filter(l => l);
     console.log('OCR Lines:', lines);
 
+    // ── ดึง Ref No ก่อน เพื่อ blacklist ออกจาก amount parsing ──────────────
+    // ลำดับ priority: label ชัดเจน → alphanumeric ยาว → ตัวเลขล้วนยาว
+    let refMatch =
+      text.match(/(?:รหัสอ้างอิง|หมายเลขอ้างอิง|เลขที่อ้างอิง)[:\s]*([A-Z0-9]{8,})/i) ||
+      text.match(/(?:เลขที่รายการ|รหัสทำรายการ)[:\s]*([A-Z0-9]{8,})/i) ||
+      text.match(/(?:Bank\s*[Rr]ef(?:erence)?|Ref(?:erence)?(?:\s*No)?\.?)[:\s]*([A-Z0-9]{8,})/i) ||
+      text.match(/(?:Transaction\s*(?:ID|No)?\.?)[:\s]*([A-Z0-9]{8,})/i) ||
+      // KBANK/SCB style: ตัวเลข+ตัวอักษร เช่น 016160212553CTF09075, 016161074447AOR02022
+      text.match(/\b(\d{8,}[A-Z]{2,}[A-Z0-9]*)\b/i) ||
+      // TTB style: ตัวเลขล้วนยาว 15+ หลัก
+      text.match(/\b(\d{15,})\b/);
+
+    // normalize: uppercase ทั้งหมด กัน OCR อ่านตัวอักษรผิด case
+    const refNo = refMatch ? refMatch[1].trim().toUpperCase() : null;
+    console.log('📌 Ref No:', refNo);
+
+    // ── สร้าง text สำหรับ parse amount โดยลบบรรทัด Ref ออก ─────────────────
+    // กัน OCR merge เลข Ref ติดกับ label "จำนวน"
+    const textForAmount = lines
+      .filter(l => {
+        // ลบบรรทัดที่มีเลข Ref หรือเป็น label เลขที่รายการ
+        if (refNo && l.includes(refNo)) return false;
+        if (/^(เลขที่รายการ|รหัสอ้างอิง|หมายเลขอ้างอิง|เลขที่อ้างอิง|รหัสทำรายการ|Bank\s*[Rr]ef|Ref\s*No|Transaction)/i.test(l)) return false;
+        // ลบบรรทัดที่มีแต่ตัวเลขยาวเกิน 10 หลักติดกัน (likely ref)
+        if (/^\d{10,}[A-Z0-9]*$/i.test(l.replace(/\s/g, ''))) return false;
+        return true;
+      })
+      .join('\n');
+
+    console.log('📄 textForAmount:', textForAmount);
+
+    // ── ดึงยอดเงิน (priority สูงไปต่ำ) ──────────────────────────────────────
+    let amountMatch = null;
+
+    // 1. มี label "จำนวน" นำหน้า + ตัวเลขที่มีจุลภาค/ทศนิยม (format ชัดเจนที่สุด)
+    amountMatch = textForAmount.match(/(?:จำนวน(?:เงิน)?)[:\s]*(\d{1,3}(?:,\d{3})+(?:\.\d{2})?)(?:\s*บาท)?/);
+    // 2. มี label "จำนวน" + ตัวเลขทั่วไป (แต่ต้องไม่ยาวเกิน 8 หลัก)
+    if (!amountMatch) amountMatch = textForAmount.match(/(?:จำนวน(?:เงิน)?)[:\s]*(\d{1,6}(?:\.\d{2})?)(?:\s*บาท|\s|$)/);
+    // 3. Amount label ภาษาอังกฤษ
+    if (!amountMatch) amountMatch = textForAmount.match(/Amount[^\d]*(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)/i);
+    // 4. มี unit "บาท/THB/฿" ต่อท้าย + format จุลภาค
+    if (!amountMatch) amountMatch = textForAmount.match(/(\d{1,3}(?:,\d{3})+(?:\.\d{2})?)\s*(?:บาท|THB|฿)/i);
+    // 5. มี unit + ทศนิยม
+    if (!amountMatch) amountMatch = textForAmount.match(/(\d{1,6}\.\d{2})\s*(?:บาท|THB|฿)/i);
+    // 6. THB นำหน้า
+    if (!amountMatch) amountMatch = textForAmount.match(/THB\s*(\d{1,3}(?:,\d{3})*\.\d{2})/);
+    // 7. ตัวเลขโดดๆ บรรทัดเดียว (ttb style) — ต้องไม่ยาวเกิน 8 หลัก
+    if (!amountMatch) amountMatch = textForAmount.match(/^(\d{1,6}(?:,\d{3})*\.\d{2})$/m);
+    // 8. ตัวเลขที่มีจุลภาคและทศนิยม แต่ต้องสั้นกว่า 10 หลักรวมจุด
+    if (!amountMatch) {
+      const m = textForAmount.match(/\b(\d{1,3}(?:,\d{3})+\.\d{2})\b/);
+      if (m) amountMatch = m;
+    }
+
+    const rawAmount = amountMatch ? amountMatch[1] : null;
+    const parsedAmount = rawAmount ? parseFloat(rawAmount.replace(/,/g, '')) : 0;
+    // ตรวจสอบ: ต้องมีค่า >= 1 และไม่ใช่เลขที่ยาวผิดปกติ (> 7 หลักก่อนจุด = likely ref)
+    const amountDigits = rawAmount ? rawAmount.replace(/[,\.]/g, '') : '';
+    const amount = (parsedAmount >= 1 && amountDigits.length <= 9) ? rawAmount : null;
+
+    console.log('💰 Raw amount:', rawAmount, '| Parsed:', parsedAmount, '| Final:', amount);
+
+    // ── ชื่อ sender/receiver ──────────────────────────────────────────────────
     function isNameLine(str) {
       if (!str || str.length < 3) return false;
       if (/^\d{4,}/.test(str)) return false;
@@ -121,25 +184,7 @@ async function readSlip(imageBuffer) {
       }
     }
 
-    // ── ดึงยอดเงิน ───────────────────────────────────────────────────────────
-    let amountMatch = null;
-    // มี label นำหน้า
-    amountMatch = text.match(/(?:จำนวน(?:เงิน)?)[:\s]*(\d{1,3}(?:,\d{3})+(?:\.\d{2})?)(?:\s*บาท)?/);
-    if (!amountMatch) amountMatch = text.match(/(?:จำนวน(?:เงิน)?)[:\s]*(\d{1,6}(?:\.\d{2})?)/);
-    if (!amountMatch) amountMatch = text.match(/Amount[^\d]*(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)/i);
-    // มี unit ต่อท้าย
-    if (!amountMatch) amountMatch = text.match(/(\d{1,3}(?:,\d{3})+(?:\.\d{2})?)\s*(?:บาท|THB|฿)/i);
-    if (!amountMatch) amountMatch = text.match(/(\d{1,6}\.\d{2})\s*(?:บาท|THB|฿)/i);
-    if (!amountMatch) amountMatch = text.match(/THB\s*(\d{1,3}(?:,\d{3})*\.\d{2})/);
-    // ดักจับตัวเลขเปล่าๆ เช่น ttb ที่แสดง 80.00 โดดๆ บรรทัดเดียว
-    if (!amountMatch) amountMatch = text.match(/^(\d{1,3}(?:,\d{3})*\.\d{2})$/m);
-    // ดักจับตัวเลขที่มีจุลภาคและจุดทศนิยม เช่น 1,234.56
-    if (!amountMatch) amountMatch = text.match(/\b(\d{1,3}(?:,\d{3})+\.\d{2})\b/);
-
-    const rawAmount = amountMatch ? amountMatch[1] : null;
-    const parsedAmount = rawAmount ? parseFloat(rawAmount.replace(/,/g, '')) : 0;
-    const amount = parsedAmount >= 1 ? rawAmount : null;
-
+    // ── วันที่ / เวลา ─────────────────────────────────────────────────────────
     const dateMatch =
       text.match(/(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})/) ||
       text.match(/(\d{4}[-\/]\d{1,2}[-\/]\d{1,2})/) ||
@@ -152,16 +197,7 @@ async function readSlip(imageBuffer) {
       text.match(/(\d{1,2}:\d{2})\s*(?:AM|PM|น\.)?/i);
     const time = timeMatch ? timeMatch[1] : null;
 
-    // ── ดึงเลข Ref ───────────────────────────────────────────────────────────
-    let refMatch =
-      text.match(/(?:รหัสอ้างอิง|หมายเลขอ้างอิง|เลขที่อ้างอิง)[:\s]*([A-Z0-9]{8,})/i) ||
-      text.match(/(?:เลขที่รายการ|รหัสทำรายการ)[:\s]*([A-Z0-9]{8,})/i) ||
-      text.match(/(?:Bank\s*[Rr]ef(?:erence)?|Ref(?:erence)?(?:\s*No)?\.?)[:\s]*([A-Z0-9]{8,})/i) ||
-      text.match(/(?:Transaction\s*(?:ID|No)?\.?)[:\s]*([A-Z0-9]{8,})/i) ||
-      text.match(/\b(\d{15,})\b/); // เลขยาว 15+ หลัก เช่น ของ ttb
-    const refNo = refMatch ? refMatch[1].trim() : null;
-    console.log('📌 Ref No:', refNo);
-
+    // ── ตรวจว่าเป็นสลิปจริงไหม ───────────────────────────────────────────────
     const slipKeywords = [
       'โอนเงินสำเร็จ','โอนเงิน','สำเร็จ','จำนวนเงิน','จำนวน',
       'รหัสอ้างอิง','เลขที่อ้างอิง','เลขที่รายการ','หมายเลขอ้างอิง',

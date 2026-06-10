@@ -12,6 +12,13 @@ const auth = new google.auth.GoogleAuth({
 
 const sheets = google.sheets({ version: 'v4', auth });
 
+// normalize refNo ให้ตรงกันทั้งฝั่ง save และ compare
+// กัน OCR อ่าน uppercase/lowercase ต่างกันในแต่ละครั้ง
+function normalizeRef(ref) {
+  if (!ref) return null;
+  return String(ref).trim().toUpperCase();
+}
+
 async function getUnpaidList() {
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: process.env.GOOGLE_SHEET_ID,
@@ -29,14 +36,18 @@ async function getUnpaidList() {
 }
 
 async function isSlipDuplicate(refNo) {
-  if (!refNo) return false;
+  const normalized = normalizeRef(refNo);
+  if (!normalized) return false;
   try {
     const res = await sheets.spreadsheets.values.get({
       spreadsheetId: process.env.GOOGLE_SHEET_ID,
       range: 'Sheet2!A2:A',
     });
     const rows = res.data.values || [];
-    return rows.some(row => row[0] === refNo);
+    const isDup = rows.some(row => normalizeRef(row[0]) === normalized);
+    if (isDup) console.log('⚠️ พบสลิปซ้ำ Ref:', normalized);
+    else console.log('✅ Ref ใหม่ ไม่ซ้ำ:', normalized);
+    return isDup;
   } catch (err) {
     console.error('❌ isSlipDuplicate error:', err.message);
     return false;
@@ -44,7 +55,8 @@ async function isSlipDuplicate(refNo) {
 }
 
 async function saveSlipRef({ refNo, amount, sender, receiver, date, time }) {
-  if (!refNo) return;
+  const normalized = normalizeRef(refNo);
+  if (!normalized) return;
   try {
     const now = new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' });
     await sheets.spreadsheets.values.append({
@@ -52,10 +64,11 @@ async function saveSlipRef({ refNo, amount, sender, receiver, date, time }) {
       range: 'Sheet2!A:G',
       valueInputOption: 'USER_ENTERED',
       requestBody: {
-        values: [[refNo, amount || '-', sender || '-', receiver || '-', date || '-', time || '-', now]],
+        // บันทึก refNo แบบ uppercase เสมอ
+        values: [[normalized, amount || '-', sender || '-', receiver || '-', date || '-', time || '-', now]],
       },
     });
-    console.log('✅ บันทึก Ref สลิปแล้ว:', refNo);
+    console.log('✅ บันทึก Ref สลิปแล้ว:', normalized);
   } catch (err) {
     console.error('❌ saveSlipRef error:', err.message);
   }
