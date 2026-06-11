@@ -155,7 +155,19 @@ async function readSlip(imageBuffer) {
         if (found && !receiver) { receiver = found.name; i = found.index; }
         continue;
       }
-      if (isArrow) { mode = 'to'; continue; }
+      if (isArrow) {
+        mode = 'to';
+        // ถ้ายังไม่มี sender และบรรทัดก่อนหน้าลูกศรเป็นชื่อ (กรณีไม่มี label From)
+        // ให้ดึงชื่อนั้นมาเป็น sender ทันที ป้องกัน prefix-fallback แย่งใช้ชื่อผิด
+        if (!sender) {
+          for (let j = i - 1; j >= 0; j--) {
+            if (isNameLine(lines[j])) { sender = lines[j]; break; }
+            // หยุดค้นถ้าเจอ label อื่นที่ไม่ใช่ชื่อ/เลขบัญชี (กันดึงชื่อข้ามบรรทัดผิดบล็อก)
+            if (/^(From|To|จาก|ไปยัง|ไปถึง|ถึง)/i.test(lines[j])) break;
+          }
+        }
+        continue;
+      }
       if (mode === 'from' && !sender && isNameLine(line)) { sender = line; continue; }
       if (mode === 'to' && !receiver && isNameLine(line)) { receiver = line; continue; }
       if (/^(Fee|Amount|จำนวนเงิน|จำนวน|Bank reference|Transaction|วันที่|ค่าธรรมเนียม|เลขที่รายการ|วันที่ทำรายการ)/i.test(line)) {
@@ -183,7 +195,8 @@ async function readSlip(imageBuffer) {
         if (!sender)   sender   = unique[0];
         if (!receiver) receiver = unique[1];
       } else if (unique.length === 1) {
-        if (!sender) sender = unique[0];
+        // ป้องกันใส่ชื่อเดียวกันซ้ำเป็นทั้ง sender และ receiver
+        if (!sender && unique[0] !== receiver) sender = unique[0];
       }
     }
 
