@@ -163,16 +163,9 @@ async function readSlip(imageBuffer) {
       }
     }
 
-    if (!sender || !receiver) {
-      const unique = [...new Set(findNamesByPrefix())];
-      if (unique.length >= 2) {
-        if (!sender)   sender   = unique[0];
-        if (!receiver) receiver = unique[1];
-      } else if (unique.length === 1) {
-        if (!sender) sender = unique[0];
-      }
-    }
-
+    // ── ลำดับความสำคัญ: ถ้ามีลูกศร (↓→▼) ให้ใช้ตำแหน่งซ้าย-ขวาของลูกศรก่อน ──
+    // เพราะสลิปบางธนาคาร (เช่น Krungsri) ไม่มี label "From/To" และมีแค่ชื่อ
+    // ภาษาอังกฤษล้วน (ไม่มีคำนำหน้า นาย/นาง) ทำให้ findNamesByPrefix() พลาด
     if (!sender && !receiver) {
       const arrowIdx = lines.findIndex(l => /^[↓→▼]$/.test(l));
       if (arrowIdx > 0) {
@@ -181,6 +174,16 @@ async function readSlip(imageBuffer) {
         }
         const found = findNextName(arrowIdx + 1);
         if (found) receiver = found.name;
+      }
+    }
+
+    if (!sender || !receiver) {
+      const unique = [...new Set(findNamesByPrefix())];
+      if (unique.length >= 2) {
+        if (!sender)   sender   = unique[0];
+        if (!receiver) receiver = unique[1];
+      } else if (unique.length === 1) {
+        if (!sender) sender = unique[0];
       }
     }
 
