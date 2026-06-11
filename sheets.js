@@ -1,16 +1,17 @@
+// sheets.js
+
 require('dotenv').config();
 const { google } = require('googleapis');
 
+// เปลี่ยนจากเดิมที่แยก 3 ตัวแปร → ใช้ JSON ทั้งก้อนแทน
 const auth = new google.auth.GoogleAuth({
-  credentials: {
-    client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-    private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
-    private_key_id: process.env.GOOGLE_PRIVATE_KEY_ID,
-  },
+  credentials: JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON),
   scopes: ['https://www.googleapis.com/auth/spreadsheets'],
 });
 
 const sheets = google.sheets({ version: 'v4', auth });
+
+// ... โค้ดที่เหลือเหมือนเดิมทุกอย่าง (normalizeRef, getUnpaidList, isSlipDuplicate, saveSlipRef)
 
 // normalize refNo ให้ตรงกันทั้งฝั่ง save และ compare
 // กัน OCR อ่าน uppercase/lowercase ต่างกันในแต่ละครั้ง
