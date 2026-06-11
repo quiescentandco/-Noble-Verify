@@ -4,6 +4,10 @@ require('dotenv').config();
 const { google } = require('googleapis');
 
 // เปลี่ยนจากเดิมที่แยก 3 ตัวแปร → ใช้ JSON ทั้งก้อนแทน
+// เพิ่มบรรทัดนี้ก่อน const auth
+console.log('🔍 JSON env exists:', !!process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
+console.log('🔍 JSON starts:', process.env.GOOGLE_SERVICE_ACCOUNT_JSON?.substring(0, 30));
+
 const auth = new google.auth.GoogleAuth({
   credentials: JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON),
   scopes: ['https://www.googleapis.com/auth/spreadsheets'],
