@@ -27,29 +27,22 @@ async function readSlip(imageBuffer) {
     console.log('OCR Lines:', lines);
 
     // ── ดึง Ref No ก่อน เพื่อ blacklist ออกจาก amount parsing ──────────────
-    // ลำดับ priority: label ชัดเจน → alphanumeric ยาว → ตัวเลขล้วนยาว
     let refMatch =
       text.match(/(?:รหัสอ้างอิง|หมายเลขอ้างอิง|เลขที่อ้างอิง)[:\s]*([A-Z0-9]{8,})/i) ||
       text.match(/(?:เลขที่รายการ|รหัสทำรายการ)[:\s]*([A-Z0-9]{8,})/i) ||
       text.match(/(?:Bank\s*[Rr]ef(?:erence)?|Ref(?:erence)?(?:\s*No)?\.?)[:\s]*([A-Z0-9]{8,})/i) ||
       text.match(/(?:Transaction\s*(?:ID|No)?\.?)[:\s]*([A-Z0-9]{8,})/i) ||
-      // KBANK/SCB style: ตัวเลข+ตัวอักษร เช่น 016160212553CTF09075, 016161074447AOR02022
       text.match(/\b(\d{8,}[A-Z]{2,}[A-Z0-9]*)\b/i) ||
-      // TTB style: ตัวเลขล้วนยาว 15+ หลัก
       text.match(/\b(\d{15,})\b/);
 
-    // normalize: uppercase ทั้งหมด กัน OCR อ่านตัวอักษรผิด case
     const refNo = refMatch ? refMatch[1].trim().toUpperCase() : null;
     console.log('📌 Ref No:', refNo);
 
     // ── สร้าง text สำหรับ parse amount โดยลบบรรทัด Ref ออก ─────────────────
-    // กัน OCR merge เลข Ref ติดกับ label "จำนวน"
     const textForAmount = lines
       .filter(l => {
-        // ลบบรรทัดที่มีเลข Ref หรือเป็น label เลขที่รายการ
         if (refNo && l.includes(refNo)) return false;
         if (/^(เลขที่รายการ|รหัสอ้างอิง|หมายเลขอ้างอิง|เลขที่อ้างอิง|รหัสทำรายการ|Bank\s*[Rr]ef|Ref\s*No|Transaction)/i.test(l)) return false;
-        // ลบบรรทัดที่มีแต่ตัวเลขยาวเกิน 10 หลักติดกัน (likely ref)
         if (/^\d{10,}[A-Z0-9]*$/i.test(l.replace(/\s/g, ''))) return false;
         return true;
       })
@@ -60,21 +53,13 @@ async function readSlip(imageBuffer) {
     // ── ดึงยอดเงิน (priority สูงไปต่ำ) ──────────────────────────────────────
     let amountMatch = null;
 
-    // 1. มี label "จำนวน" นำหน้า + ตัวเลขที่มีจุลภาค/ทศนิยม (format ชัดเจนที่สุด)
     amountMatch = textForAmount.match(/(?:จำนวน(?:เงิน)?)[:\s]*(\d{1,3}(?:,\d{3})+(?:\.\d{2})?)(?:\s*บาท)?/);
-    // 2. มี label "จำนวน" + ตัวเลขทั่วไป (แต่ต้องไม่ยาวเกิน 8 หลัก)
     if (!amountMatch) amountMatch = textForAmount.match(/(?:จำนวน(?:เงิน)?)[:\s]*(\d{1,6}(?:\.\d{2})?)(?:\s*บาท|\s|$)/);
-    // 3. Amount label ภาษาอังกฤษ
     if (!amountMatch) amountMatch = textForAmount.match(/Amount[^\d]*(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)/i);
-    // 4. มี unit "บาท/THB/฿" ต่อท้าย + format จุลภาค
     if (!amountMatch) amountMatch = textForAmount.match(/(\d{1,3}(?:,\d{3})+(?:\.\d{2})?)\s*(?:บาท|THB|฿)/i);
-    // 5. มี unit + ทศนิยม
     if (!amountMatch) amountMatch = textForAmount.match(/(\d{1,6}\.\d{2})\s*(?:บาท|THB|฿)/i);
-    // 6. THB นำหน้า
     if (!amountMatch) amountMatch = textForAmount.match(/THB\s*(\d{1,3}(?:,\d{3})*\.\d{2})/);
-    // 7. ตัวเลขโดดๆ บรรทัดเดียว (ttb style) — ต้องไม่ยาวเกิน 8 หลัก
     if (!amountMatch) amountMatch = textForAmount.match(/^(\d{1,6}(?:,\d{3})*\.\d{2})$/m);
-    // 8. ตัวเลขที่มีจุลภาคและทศนิยม แต่ต้องสั้นกว่า 10 หลักรวมจุด
     if (!amountMatch) {
       const m = textForAmount.match(/\b(\d{1,3}(?:,\d{3})+\.\d{2})\b/);
       if (m) amountMatch = m;
@@ -82,13 +67,12 @@ async function readSlip(imageBuffer) {
 
     const rawAmount = amountMatch ? amountMatch[1] : null;
     const parsedAmount = rawAmount ? parseFloat(rawAmount.replace(/,/g, '')) : 0;
-    // ตรวจสอบ: ต้องมีค่า >= 1 และไม่ใช่เลขที่ยาวผิดปกติ (> 7 หลักก่อนจุด = likely ref)
     const amountDigits = rawAmount ? rawAmount.replace(/[,\.]/g, '') : '';
     const amount = (parsedAmount >= 1 && amountDigits.length <= 9) ? rawAmount : null;
 
     console.log('💰 Raw amount:', rawAmount, '| Parsed:', parsedAmount, '| Final:', amount);
 
-    // ── ชื่อ sender/receiver ──────────────────────────────────────────────────
+    // ── ฟังก์ชัน helper ───────────────────────────────────────────────────────
     function isNameLine(str) {
       if (!str || str.length < 3) return false;
       if (/^\d{4,}/.test(str)) return false;
@@ -127,10 +111,16 @@ async function readSlip(imageBuffer) {
       return lines.filter(l => (thaiPrefixes.test(l) || engPrefixes.test(l)) && isNameLine(l));
     }
 
+    // ── ตรวจสอบว่าบรรทัดเป็นเลขบัญชีที่ถูก mask ──────────────────────────
+    function isAcctLine(l) {
+      return /^[Xx]{2,3}-?[\w-]*[Xx]\b/.test(l) || /^\d{3}-\d{1}-x{3,}-?\d?$/i.test(l);
+    }
+
     let sender = null;
     let receiver = null;
     let mode = null;
 
+    // ── Loop หลัก: จับ From/To label และลูกศร ────────────────────────────────
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i].trim();
 
@@ -147,6 +137,7 @@ async function readSlip(imageBuffer) {
         if (found && !sender) { sender = found.name; i = found.index; }
         continue;
       }
+
       if (isToLabel || isMisreadToLabel) {
         mode = 'to';
         const inline = stripLabel(line);
@@ -155,19 +146,30 @@ async function readSlip(imageBuffer) {
         if (found && !receiver) { receiver = found.name; i = found.index; }
         continue;
       }
+
       if (isArrow) {
         mode = 'to';
-        // ถ้ายังไม่มี sender และบรรทัดก่อนหน้าลูกศรเป็นชื่อ (กรณีไม่มี label From)
-        // ให้ดึงชื่อนั้นมาเป็น sender ทันที ป้องกัน prefix-fallback แย่งใช้ชื่อผิด
+        // ✅ FIX: ค้นหา sender ก่อนลูกศร โดยข้าม account line (XXX-x-xxxxx-X)
         if (!sender) {
           for (let j = i - 1; j >= 0; j--) {
-            if (isNameLine(lines[j])) { sender = lines[j]; break; }
-            // หยุดค้นถ้าเจอ label อื่นที่ไม่ใช่ชื่อ/เลขบัญชี (กันดึงชื่อข้ามบรรทัดผิดบล็อก)
-            if (/^(From|To|จาก|ไปยัง|ไปถึง|ถึง)/i.test(lines[j])) break;
+            const candidate = lines[j]?.trim();
+            if (!candidate) continue;
+            // ข้าม masked account line
+            if (isAcctLine(candidate)) continue;
+            // หยุดถ้าเจอ label ที่ไม่ใช่ชื่อ
+            if (/^(From|To|จาก|ไปยัง|ไปถึง|ถึง)/i.test(candidate)) break;
+            if (isNameLine(candidate)) { sender = candidate; break; }
+            break;
           }
+        }
+        // ค้นหา receiver หลังลูกศร
+        if (!receiver) {
+          const found = findNextName(i + 1);
+          if (found) { receiver = found.name; i = found.index; }
         }
         continue;
       }
+
       if (mode === 'from' && !sender && isNameLine(line)) { sender = line; continue; }
       if (mode === 'to' && !receiver && isNameLine(line)) { receiver = line; continue; }
       if (/^(Fee|Amount|จำนวนเงิน|จำนวน|Bank reference|Transaction|วันที่|ค่าธรรมเนียม|เลขที่รายการ|วันที่ทำรายการ)/i.test(line)) {
@@ -175,47 +177,53 @@ async function readSlip(imageBuffer) {
       }
     }
 
-    // ── ลำดับความสำคัญ: ถ้ามีลูกศร (↓→▼) ให้ใช้ตำแหน่งซ้าย-ขวาของลูกศรก่อน ──
-    // เพราะสลิปบางธนาคาร (เช่น Krungsri) ไม่มี label "From/To" และมีแค่ชื่อ
-    // ภาษาอังกฤษล้วน (ไม่มีคำนำหน้า นาย/นาง) ทำให้ findNamesByPrefix() พลาด
+    // ── Fallback 1: ใช้ตำแหน่งลูกศรค้นหาชื่อ (กรณี OCR ตัด ↓ ทิ้ง) ──────
     if (!sender && !receiver) {
       const arrowIdx = lines.findIndex(l => /^[↓→▼]$/.test(l));
       if (arrowIdx > 0) {
         for (let i = arrowIdx - 1; i >= 0; i--) {
+          if (isAcctLine(lines[i])) continue;
           if (isNameLine(lines[i])) { sender = lines[i]; break; }
+          break;
         }
         const found = findNextName(arrowIdx + 1);
         if (found) receiver = found.name;
       }
     }
 
-    // ── Fallback: ไม่มี From/To/ลูกศร เลย (เช่น OCR ตัด ↓ ทิ้ง) ──────────────
-    // หา pattern: ชื่อ + เลขบัญชี (XXX-x-xxxxx-X) ติดกัน 2 คู่ → คู่แรก = sender, คู่สอง = receiver
-    // ทำก่อน prefix-fallback เพราะ structural pattern แม่นยำกว่า
+    // ── Fallback 2: ชื่อ + เลขบัญชี 2 คู่ติดกัน ─────────────────────────────
+    // ✅ FIX: เก็บ index เพื่อเรียงตามลำดับบรรทัด (บน = sender, ล่าง = receiver)
     if (!sender && !receiver) {
-      const isAcctLine = l => /^[Xx]{2,3}-?[\w-]*[Xx]\b/.test(l) || /^\d{3}-\d{1}-x{3,}-?\d?$/i.test(l);
       const namedPairs = [];
       for (let i = 0; i < lines.length - 1; i++) {
         if (isNameLine(lines[i]) && isAcctLine(lines[i + 1])) {
-          namedPairs.push(lines[i]);
+          namedPairs.push({ name: lines[i], index: i });
         }
       }
-      const uniquePairs = [...new Set(namedPairs)];
+      const seen = new Set();
+      const uniquePairs = namedPairs.filter(p => {
+        if (seen.has(p.name)) return false;
+        seen.add(p.name);
+        return true;
+      });
+
       if (uniquePairs.length >= 2) {
-        sender   = uniquePairs[0];
-        receiver = uniquePairs[1];
+        // เรียงตาม index บนลงล่าง: บน = sender, ล่าง = receiver
+        uniquePairs.sort((a, b) => a.index - b.index);
+        sender   = uniquePairs[0].name;
+        receiver = uniquePairs[1].name;
       } else if (uniquePairs.length === 1) {
-        sender = uniquePairs[0];
+        sender = uniquePairs[0].name;
       }
     }
 
+    // ── Fallback 3: ค้นหาจาก prefix (นาย/นาง/MR./MS.) ───────────────────────
     if (!sender || !receiver) {
       const unique = [...new Set(findNamesByPrefix())];
       if (unique.length >= 2) {
         if (!sender)   sender   = unique[0];
         if (!receiver) receiver = unique[1];
       } else if (unique.length === 1) {
-        // ป้องกันใส่ชื่อเดียวกันซ้ำเป็นทั้ง sender และ receiver
         if (!sender && unique[0] !== receiver) sender = unique[0];
       }
     }
@@ -250,6 +258,8 @@ async function readSlip(imageBuffer) {
     ];
 
     const isSlip = slipKeywords.some(k => text.toLowerCase().includes(k.toLowerCase()));
+
+    console.log('📋 OCR result:', { isSlip, amount, date, time, sender, receiver, refNo });
 
     return { isSlip, amount, date, time, sender, receiver, refNo, text };
   } catch (err) {
