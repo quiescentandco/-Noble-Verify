@@ -189,6 +189,26 @@ async function readSlip(imageBuffer) {
       }
     }
 
+    // ── Fallback: ไม่มี From/To/ลูกศร เลย (เช่น OCR ตัด ↓ ทิ้ง) ──────────────
+    // หา pattern: ชื่อ + เลขบัญชี (XXX-x-xxxxx-X) ติดกัน 2 คู่ → คู่แรก = sender, คู่สอง = receiver
+    // ทำก่อน prefix-fallback เพราะ structural pattern แม่นยำกว่า
+    if (!sender && !receiver) {
+      const isAcctLine = l => /^[Xx]{2,3}-?[\w-]*[Xx]\b/.test(l) || /^\d{3}-\d{1}-x{3,}-?\d?$/i.test(l);
+      const namedPairs = [];
+      for (let i = 0; i < lines.length - 1; i++) {
+        if (isNameLine(lines[i]) && isAcctLine(lines[i + 1])) {
+          namedPairs.push(lines[i]);
+        }
+      }
+      const uniquePairs = [...new Set(namedPairs)];
+      if (uniquePairs.length >= 2) {
+        sender   = uniquePairs[0];
+        receiver = uniquePairs[1];
+      } else if (uniquePairs.length === 1) {
+        sender = uniquePairs[0];
+      }
+    }
+
     if (!sender || !receiver) {
       const unique = [...new Set(findNamesByPrefix())];
       if (unique.length >= 2) {
